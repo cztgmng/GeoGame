@@ -1,0 +1,664 @@
+﻿@page
+@model GeoGame.Pages.GameModel
+@{
+    string ip = HttpContext.Connection.RemoteIpAddress.ToString();
+
+    var guid = Guid.NewGuid().ToString();
+    if (Request.Cookies["UserCookie"] != null)
+    {
+        GeoGame.AuthHelper.AddToken(GeoGame.AuthHelper.CalculateSHA256(guid + Request.Cookies["UserCookie"]));
+    }
+}
+
+<html>
+<head>
+    <title>GeoGame</title>
+    <script src="https://polyfill.io/v3/polyfill.min.js?features=default"></script>
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+    <link rel="stylesheet" href="https://code.jquery.com/ui/1.12.1/themes/base/jquery-ui.css">
+    <script>
+
+        function getCookie(name) 
+        {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) 
+            {
+                const cookie = cookies[i].trim();
+                if (cookie.startsWith(name + '=')) 
+                {
+                    return cookie.substring(name.length + 1);
+                }
+            }
+            return null;
+        }
+
+        function deleteCookie(name) 
+        {
+            document.cookie = name + '=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;';
+        }
+
+        function setCookie(name, value) 
+        {
+            document.cookie = name + "=" + value + ";";
+        }
+
+        if (!getCookie("difficulty")) 
+        {
+            setCookie("difficulty", "normal");
+        }
+
+        console.log("Your public ip: @ip");
+
+
+        function TryRandomLocation(callback) 
+        {
+            var lat = 0;
+            var lng = 0;
+
+            fetch('/GeoGame/GetRandom')
+                .then(response => response.json())
+                .then(data => 
+                    {
+                    lat = data.latitude;
+                    lng = data.longitude;
+
+
+                    var sv = new google.maps.StreetViewService();
+                    sv.getPanorama({
+                        location: new google.maps.LatLng(lat, lng),
+                        radius: 500,
+                        source: google.maps.StreetViewSource.GOOGLE
+                    }, handleCallback);
+
+                });
+        }
+
+        let TargetLat = 0;
+        let TargetLng = 0;
+
+        let startPanorama = "";
+        var panorama;
+
+        function handleCallback(data, status) 
+        {
+            console.log(status);
+            if (status == 'OK') 
+            {
+                panorama = new google.maps.StreetViewPanorama(
+                    document.getElementById("pano"),
+                    {
+                        pano: data.location.pano,
+                        pov: {
+                            heading: 0,
+                            pitch: 0
+                        }
+                    }
+                );
+
+                document.getElementById("loadingText").remove();
+
+                setTimeout(function () 
+                {
+                    startPanorama = data.location.pano;
+
+                    panorama.setOptions({
+                        showRoadLabels: false
+                    });
+
+                    TargetLat = panorama.location.latLng.lat();
+                    TargetLng = panorama.location.latLng.lng();
+                }, 1000);
+            } 
+            else 
+            {
+                console.log("retrying");
+                TryRandomLocation(handleCallback);
+            }
+        }
+
+        window.onload = function () 
+        {
+            TryRandomLocation(handleCallback);
+        }
+
+    </script>
+
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <style>
+        #map {
+            height: 400px;
+            width: 100%;
+        }
+    </style>
+
+    <style>
+        table 
+        {
+            color:white;
+            margin: -116px 0px 0px 5px;
+            width: 22%;
+            border-collapse: collapse;
+        }
+
+        th, td 
+        {
+            border: 1px solid #dddddd;
+            text-align: left;
+            padding: 8px;
+        }
+
+        th 
+        {
+            font-size: 13px;
+        }
+    </style>
+
+    <style>
+        html,
+        body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+        }
+
+        .gm-control-active 
+        {
+            display: none !important;
+        }
+
+        .leaflet-control-zoom
+        {
+            display: none !important;
+        }
+
+        .leaflet-control-attribution
+        {
+            display: none !important;
+        }
+
+        .gm-iv-address
+        {
+            display: none !important;
+        }
+
+        .gm-iv-address-link {
+            display: none !important;
+        }
+
+        .gm-iv-marker-icon {
+            display: none !important;
+        }
+
+        .gm-iv-address
+        {
+            display: none !important;
+        }
+
+        #pano {
+            width: 100vw;
+            height: 100vh;
+            position: relative; 
+        }
+
+        #map 
+        {
+            width: 100vw;
+            height: 100vh;
+            position: absolute; 
+            bottom: 0; 
+            right: 0;
+            margin: 0px 5px 5px 0px;
+            z-index: 9990;
+            transition: width 0.2s ease, height 0.2s ease;
+
+            cursor:crosshair;
+        }
+
+        .nice-button {
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: #ababab;
+            color: white;
+            text-align: center;
+            text-decoration: none;
+            font-size: 16px;
+            border-radius: 5px;
+            border: none;
+            cursor: pointer;
+            transition: width 0.5s ease, height 0.5s ease;
+        }
+    </style>
+</head>
+<body style="margin:0px">
+    <h1 id="loadingText" style="color:white;background-color:black;">Loading...</h1>
+
+    <div id="results" style="position:absolute;width: 100vw;height: 0px;background-color:#ef4747;display:none;">
+
+        <h1 id="resultsText" style="color:white;text-align: center;margin-top: 5%;"></h1>
+        <button class="nice-button" style="background-color: #83b334;text-align: center;margin-left: 45%;margin-right: 45%;width: 10%;" onclick="location.reload();">Try again</button>
+    
+        <table>
+            <thead>
+                <tr>
+                    <th>User</th>
+                    <th>Score</th>
+                </tr>
+            </thead>
+            <tbody>
+                @{
+                    var pm = new GeoGame.PointsManager();
+                    foreach (var item in pm.GetSortedPoints())
+                    {
+                        <tr>
+                            <td>@item.Key</td>
+                            <td id="@item.Key">@item.Value</td>
+                        </tr>
+                    }
+                }
+            </tbody>
+        </table>
+    
+    </div>
+
+        <div id="pano" style="background-color:black;">
+
+        <button id="confirmButton" class="nice-button" style="position:absolute;z-index:9999;text-align:right;right: 0;margin: 5px 5px 0px 0px;">
+            Confirm
+        </button>
+
+        <button id="homeButton" class="nice-button" style="position:absolute;z-index:9999;text-align:right;margin: 5px 0px 0px 5px;background-color: gainsboro;">
+            <i class="fa fa-home" style="color: black;font-size: 20px;"></i>
+        </button>
+
+        <button id="settingsButton" class="nice-button" style="position:absolute;z-index:9999;text-align:right;margin: 5px 0px 0px 70px;background-color: gainsboro;">
+            <i class="fa fa-cog" style="color: black;font-size: 20px;"></i>
+        </button>
+
+            <div id="map">
+            </div> 
+        </div>
+
+
+    <script>
+        let canClick = false;
+        let gameEnded = false;
+        document.getElementById('confirmButton').addEventListener('click', function (event) 
+        {
+            event.stopPropagation();
+            if (!canClick) 
+            {
+                return;
+            }
+
+            gameEnded = true;
+            console.log("confirmed");
+
+            if (currentMarker !== null) {
+                map.removeLayer(currentMarker);
+            }
+
+            const coordinates =
+            {
+                lat: TargetLat,
+                lng: TargetLng
+            };
+
+            currentLng = fixLongitude(currentLng);
+            currentLat = fixLatitude(currentLat);
+
+            const coordinates1 = [TargetLng, TargetLat];
+            const coordinates2 = [currentLng, currentLat];
+            console.log(coordinates1);
+            console.log(coordinates2);
+            L.marker(coordinates, { icon: flagIcon }).addTo(map);
+
+            var LineCoordinates = [
+                [TargetLat, TargetLng],
+                [currentLat, currentLng]
+            ];
+
+            const finalPin =
+            {
+                lat: currentLat,
+                lng: currentLng
+            };
+
+            currentMarker = L.marker(finalPin, { icon: pinIcon }).addTo(map);
+            var polyline = L.polyline(LineCoordinates, { color: 'red' }).addTo(map);
+
+            document.getElementById("results").style.display = "unset";
+            document.getElementById("results").style.height = "100vh";
+            document.getElementById("results").style.zIndex = "9999";
+            document.getElementById("map").style.width = "99%";
+            document.getElementById("map").style.zIndex = "9999";
+            document.getElementById("map").style.height = "68%";
+            document.getElementById("map").style.margin = "0.5%";
+            let distance = haversineDistance(coordinates1, coordinates2) * 1000;
+
+            let points = 0;
+
+            if (getCookie("difficulty") == "easy")
+            {
+                points = convertToPointsEasy(distance);
+            }
+            else
+            {
+                points = convertToPoints(distance)
+            }
+
+            var formData =
+            {
+                value: points
+            };
+
+            fetch('/GeoGame/UploadResults',
+                {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'auth': '@guid'
+                    },
+                    body: JSON.stringify(formData)
+                });
+
+            if (distance < 5) 
+            {
+                document.getElementById("resultsText").innerHTML = "You won! (" + formData.value + " points)";
+            }
+            else 
+            { 
+                document.getElementById("resultsText").innerHTML = "You missed by " + calculateDistance(coordinates1, coordinates2) + "! (" + formData.value + " points)";
+            }
+            document.getElementById("confirmButton").style.display = "none";
+
+            map.invalidateSize();
+            map.fitBounds(polyline.getBounds());
+
+            if (document.getElementById(getCookie("UserCookie")) != null) 
+            {
+                let currentValue = parseFloat(document.getElementById(getCookie("UserCookie")).innerHTML);
+                let exportValue = currentValue + parseFloat(formData.value);
+
+                document.getElementById(getCookie("UserCookie")).innerHTML = exportValue;
+            }
+        });
+
+        function convertToPoints(number) 
+        {
+            if (number <= 7) 
+            {
+                return 25000;
+            }
+            else if (number > 2500000) 
+            {
+                return 0;
+            }
+            else 
+            {
+                var result = -0.00800002240006272 * number + 20000.0560001568;
+                return parseFloat(result.toFixed(2));
+            }
+        }
+
+        function convertToPointsEasy(number) 
+        {
+            if (number <= 7) 
+            {
+                return 2500;
+            }
+            else if (number > 250000)
+            {
+                return 0;
+            }
+            else 
+            {
+                var result = -0.01000028000784022 * number + 2500.070001960055;
+                return parseFloat(result.toFixed(2));
+            }
+        }
+
+        function fixMap() 
+        { 
+            console.log("fixing");
+            map.invalidateSize();
+        }
+
+        document.getElementById('map').addEventListener('mouseenter', function (event) 
+        {
+            event.stopPropagation();
+
+            if (gameEnded)
+            {
+                return;
+            }
+
+            document.getElementById('map').style.width = "75%";
+            document.getElementById('map').style.height = "75%";
+
+            var interval = setInterval(fixMap, 5);
+
+            setTimeout(function () {
+                clearInterval(interval); 
+                console.log("Logging stopped after 0.2 seconds.");
+            }, 200);
+        });
+
+        document.getElementById('map').addEventListener('mouseleave', function (event) 
+        {
+            event.stopPropagation();
+
+            if (gameEnded) 
+            {
+                return;
+            }
+
+            document.getElementById('map').style.width = "28%";
+            document.getElementById('map').style.height = "25%";
+            
+            var interval = setInterval(fixMap, 5);
+
+            setTimeout(function () {
+                clearInterval(interval);
+                console.log("logging stopped after 0.2 seconds!!!!!!!!");
+            }, 200);
+        });
+
+        document.getElementById('homeButton').addEventListener('click', function (event) 
+        {
+            event.stopPropagation();
+
+            panorama.setPano(startPanorama);
+            panorama.setPov({
+                heading: 0, 
+                pitch: 0
+            });
+        });
+
+        document.getElementById('settingsButton').addEventListener('click', function (event) 
+        {
+            event.stopPropagation();
+
+            $("#dialog").dialog(
+            {
+                autoOpen: true,
+                modal: true,
+                buttons: 
+                {
+                    "Easy": function () 
+                    {
+                        setCookie("difficulty", "easy");
+                            document.getElementById("difficultyLevel").innerHTML = getCookie("difficulty");
+                        $(this).dialog("close");
+                    },
+                    "Normal": function () 
+                    {
+                        setCookie("difficulty", "normal");
+                            document.getElementById("difficultyLevel").innerHTML = getCookie("difficulty");
+                        $(this).dialog("close");
+                    }
+                }
+            });
+        });
+
+        function logout()
+        {
+            deleteCookie('UserCookie');
+            location.reload();
+        }
+
+    </script>
+    <div id="dialog" title="Choose Difficulty" style="display:none;z-index:9999;">
+        Choose your difficulty level<br>
+        (current: <span id="difficultyLevel"></span>)
+        <p style="color:#777">Changes will take place in the next game.</p>
+        <button onclick="logout()">Log Out</button>
+    </div>
+
+    <script>
+        document.getElementById("difficultyLevel").innerHTML = getCookie("difficulty");
+    </script>
+
+    <script src="https://maps.googleapis.com/maps/api/js?key=[your key]&callback=initialize&v=weekly" defer></script> <!-- INSERT YOUR KEY HERE -->
+
+
+    <script>
+        var map = L.map('map').setView([0, 0], 2);
+
+
+        L.tileLayer('http://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}&hl=en', {
+            maxZoom: 20,
+            subdomains: ['mt0', 'mt1', 'mt2', 'mt3']
+        }).addTo(map);
+
+        var pinIcon = L.icon({
+            iconUrl: 'https://cdn.jsdelivr.net/npm/leaflet@1.7.1/dist/images/marker-icon.png',
+            iconSize: [25, 41],
+            iconAnchor: [12, 41],
+            popupAnchor: [1, -34],
+        });
+
+        var flagIcon = L.icon({
+            iconUrl: 'https://cdn-icons-png.flaticon.com/512/668/668087.png',
+            iconSize: [25, 41],
+            iconAnchor: [12, 41],
+            popupAnchor: [1, -34],
+        });
+
+        var currentMarker = null;
+        let currentLat = 0;
+        let currentLng = 0;
+        function onMapClick(e) {
+            if (currentMarker !== null) {
+                map.removeLayer(currentMarker);
+            }
+            console.log(e.latlng);
+            currentMarker = L.marker(e.latlng, { icon: pinIcon }).addTo(map);
+            currentLat = e.latlng.lat;
+            currentLng = e.latlng.lng;
+            console.log("Latitude: " + e.latlng.lat + ", Longitude: " + e.latlng.lng);
+            canClick = true;
+            document.getElementById("confirmButton").style.backgroundColor = "#4CAF50";
+        }
+
+        map.on('click', onMapClick);
+
+        setInterval(function () { map.invalidateSize() }, 400);
+    </script>
+
+
+    <script>
+        document.getElementById('map').style.width = "28%";
+        document.getElementById('map').style.height = "25%";
+        isFullscreen = false;
+
+        function toRad(x) 
+        {
+            return x * Math.PI / 180;
+        }
+
+        // chat gpt math ;pp
+        function haversineDistance(coords1, coords2) 
+        {
+            function toRad(x) {
+                return x * Math.PI / 180;
+            }
+
+            const lon1 = coords1[0];
+            const lat1 = coords1[1];
+            const lon2 = coords2[0];
+            const lat2 = coords2[1];
+
+            const R = 6371; 
+
+            const dLat = toRad(lat2 - lat1);
+            const dLon = toRad(lon2 - lon1);
+            const a =
+                Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+                Math.sin(dLon / 2) * Math.sin(dLon / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            const distance = R * c;
+
+            return distance; 
+        }
+
+        function calculateDistance(coords1, coords2) 
+        {
+            const distanceInMeters = haversineDistance(coords1, coords2) * 1000;
+
+            if (distanceInMeters > 1000) 
+            {
+                return (distanceInMeters / 1000).toFixed(2) + " km";
+            } 
+            else 
+            {
+                return distanceInMeters.toFixed(2) + " meters";
+            }
+        }
+
+        function fixLongitude(longitude) 
+        {
+            if (longitude < -180) 
+            {
+                while (longitude < -180) 
+                {
+                    longitude += 360;
+                }
+            } 
+            else if (longitude > 180) 
+            {
+                
+                while (longitude > 180) 
+                {
+                    longitude -= 360;
+                }
+            }
+            return longitude;
+        }
+        function fixLatitude(latitude) 
+        {
+            if (latitude < -90) 
+            {
+                
+                while (latitude < -90) 
+                {
+                    latitude += 180;
+                }
+            } 
+            else if (latitude > 90) 
+            {
+                while (latitude > 90) 
+                {
+                    latitude -= 180;
+                }
+            }
+            return latitude;
+        }
+    </script>
+    <script src="https://code.jquery.com/jquery-3.6.0.js"></script>
+    <script src="https://code.jquery.com/ui/1.13.2/jquery-ui.js"></script>
+</body>
+</html>
